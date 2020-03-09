@@ -1,0 +1,401 @@
+---
+title: "Computational Modeling - Assignment 2"
+author: "Riccardo Fusaroli"
+date: "29/01/2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+1. Solve the task using grid approximation
+2. Use a uniform prior
+3. Calculate a posterior
+4. Plot the results (containing both the prior and the posterior - even though the prior is flat)
+
+5. Repeat above task using a quadratic approximation to investigate how the method changes the results
+
+6. Apply the pipeline to analyze results for all teachers
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## In this assignment we learn how to assess rates from a binomial distribution, using the case of assessing your teachers' knowledge of CogSci
+
+N.B. there is a second part at the bottom for next week.
+
+### First part
+
+You want to assess your teachers' knowledge of cognitive science. "These guys are a bunch of drama(turgist) queens, mindless philosophers, chattering communication people and Russian spies. Do they really know CogSci?", you think.
+
+To keep things simple (your teachers should not be faced with too complicated things):
+- You created a pool of equally challenging questions on CogSci
+- Each question can be answered correctly or not (we don't allow partially correct answers, to make our life simpler).
+- Knowledge of CogSci can be measured on a scale from 0 (negative knowledge, all answers wrong) through 0.5 (random chance) to 1 (awesome CogSci superpowers)
+
+This is the data:
+- Riccardo: 3 correct answers out of 6 questions
+- Kristian: 2 correct answers out of 2 questions (then he gets bored)
+- Josh: 160 correct answers out of 198 questions (Josh never gets bored)
+- Mikkel: 66 correct answers out of 132 questions
+
+```{r Loading libraries}
+library(pacman)
+p_load(rethinking, tidyverse, rstan, brms)
+
+# create a tibble from the data
+all_d <- tibble(
+  person = c('riccardo', 'kristian', 'josh', 'mikkel'),
+  correct = c(3, 2, 160, 66),
+  answered = c(6, 2, 198, 132))
+```
+
+
+Questions:
+
+# 1. What's Riccardo's estimated knowledge of CogSci? 
+What is the probability he knows more than chance (0.5) [try figuring this out. if you can't peek into chapters 3.1 and 3.2 and/or the slides]?
+- First implement a grid approximation (hint check paragraph 2.4.1!) with a uniform prior, calculate the posterior and plot the results
+- Then implement a quadratic approximation (hint check paragraph 2.4.2!).
+- N.B. for the rest of the exercise just keep using the grid approximation (we'll move to quadratic approximations in two classes)
+
+```{r Riccardo's estimated knowledge of CogSci based on grid approximation}
+# defining a probability grid
+dens <- 1e4
+p_grid <- seq(from = 0, to = 1, length.out = dens)
+# calculate bin size
+bin_size <- abs(p_grid[1]-p_grid[2])
+# defining a uniform prior
+prior <- rep(1, dens)
+# calculate bin size
+bin_size <- abs(p_grid[1]-p_grid[2])
+# investigating the prior
+dens(rbinom(dens, 6, runif(dens, 0, 1)))
+# testing a prior that excludes any value below chance (50%)
+#prior <- ifelse(p_grid < 0.5, 0, 1)
+# defining the likelihood of a correct response
+likelihood <- dbinom(3, size=6, prob = p_grid)
+# computing the standardized posterior
+posterior <- likelihood * prior / sum(likelihood *bin_size * prior)
+# plotting Riccardo's posterior
+plot(p_grid, posterior)
+# creating a tibble containing the data
+d <- tibble(prior = prior, p_grid = p_grid, likelihood = likelihood, posterior = posterior)
+# plotting the posterior distribution of Riccardo's ability
+ggplot(d)+
+  geom_line(aes(p_grid, posterior), color="red")+
+  geom_line(aes(p_grid, prior), color="blue")
+# calculating the parts of the distribution with maximum probability by drawing samples from the posterior distribution
+samples <- sample(p_grid, size = dens, replace = TRUE, prob = posterior)
+HPDI(samples)
+# Calculating the percent chance that Riccardo will score above chance
+sum((samples > 0.5) == TRUE) / length(samples)
+```
+
+##
+
+```{r Riccardo's estimated knowledge of CogSci based on quadratic approximation}
+# f is the binomial distribution (c) with a uniform prior (p)
+ric_performance <- rethinking::map(
+  alist(c ~ dbinom(6, p), # binomial distribution
+        p ~ dunif(0, 1)), # uniform prior
+  data = list(c = 3))
+# summary of the quadratic approximation
+precis(ric_performance)
+# specify a normal distribution based on the output of the model
+x <- seq(0, 1, length=dens)
+ric_dist <- dnorm(x, mean = 0.5, sd = 0.2)
+# adding riccardos distribution to the tibble 'd'
+d$ric_dist <- ric_dist
+# plotting the quadratic approximation
+ggplot(d)+
+  geom_line(aes(p_grid, ric_dist), color = "red")+
+  geom_line(aes(p_grid, prior), color = "blue")
+```
+
+
+
+# 2. Estimate all the teachers' knowledge of CogSci. Who's best? 
+Use grid approximation. Comment on the posteriors of Riccardo and Mikkel.
+2a. Produce plots of the prior, and posterior for each teacher.
+
+```{r Calculating a posterior for each teacher}
+dens <- 1e4 # set a density value of 1000
+p_grid <- seq(from = 0, to = 1, length = dens) # defining a probability grid for grid approximation
+prior <- rep(1, dens) # defining a uniform prior
+
+for (i in 1:length(all_d$person)){
+  likelihood <- dbinom(all_d$correct[i], size = all_d$answered[i], prob = p_grid)
+  posterior <- likelihood * prior / sum(likelihood * prior * bin_size)
+  # creating a tibble containing the data
+  d <- tibble(prior = prior, p_grid = p_grid, likelihood = likelihood, posterior = posterior)
+  # drawing a sample from the posterior distribution
+  samples <- sample(p_grid, size = dens, replace = TRUE, prob = posterior)
+  # creating a rounded list of the sample HDPI-values
+  x <- round(HPDI(samples), 3)
+  # getting the probability of scoring above chance.
+  xx <- sum((samples > 0.5) == TRUE) / length(samples)
+  # plotting the posterior distribution of all teachers knowledge of cogsci
+  plot <- ggplot(d)+
+    geom_line(aes(p_grid, posterior), color = "red")+
+    geom_line(aes(p_grid, prior), color = "blue")+
+    labs(x = "probability grid",
+         y = "posterior density",
+         title = all_d$person[i],
+         subtitle = paste("|89 -", x[1], "   ", x[2], "- 89|", "   scoring > chance:", xx*100, "%", sep = " "))
+  print(plot)
+  print(paste("Teacher:", all_d$person[i], "HDPI:", "|89 -", x[1], " ", x[2], "- 89|", "   scoring > chance:", xx, sep = " "))
+}
+```
+The above code prints out 4 plots containing both prior and posterior for every person we gathered data on, in this case our 4 teachers; Riccardo, Kristian, Josh & Mikkel. The plots furthermore contain information about the HPDI-value for each probability distribution.
+Since we have used a uniform prior for every individual there is not much interesting to say about this. We do however see a major difference in the posteriors. 
+- Riccardo's knowledge of cogsci produces a rather Gaussian-looking distribution with quite large variance due to the low samplesize. This is also illustrated by the 89th percentiles which are 0.23 and 0.76.
+- Kristian's knowledge of cogsci produces a distribution indicative of no possibility of getting none correct and a high probabiliy of getting everything correct. The percentiles we can see that the bulk of the distribution lies between 0.48 and 1. the bottom percentile is most likely as low as it is due to the uniform prior.
+- Josh's knowedlge of cogsci produces a very condensed probability function in the percentiles from 0.76 0.85. We can see that Josh is a lot better than e.g. Riccardo and we also has a much more condensed graph because of the fact that we have many more samples to base our posterior distribution on.
+- Mikkel's knowledge of cogsci seems to be about the same as Riccardo's, we can however judge this with more certainty as we have more data. More data produces a more precise posterior and the percentiles vary from 0.43 - 0.57.
+From investigating the possibility of scoring > chance we can see that Josh is the most knowledgeable cognitive science teacher and that Riccardo and Mikkel are almost exactly equally bad.
+
+
+# 3. Change the prior. Given your teachers have all CogSci jobs, you should start with a higher appreciation of their knowledge:
+the prior is a normal distribution with a mean of 0.8 and a standard deviation of 0.2. Do the results change (and if so how)?
+3a. Produce plots of the prior and posterior for each teacher.
+
+```{r Calculating posterior based on normally distributed prior}
+dens <- 1e4 # set a density value of 1000
+p_grid <- seq(from = 0, to = 1, length = dens) # defining a probability grid for grid approximation
+prior <- dnorm(p_grid, mean = 0.8, sd = 0.2) # defining a normal distribution with mean 0.8 and sd of 0.2 as the prior
+
+for (i in 1:length(all_d$person)){
+  likelihood <- dbinom(all_d$correct[i], size = all_d$answered[i], prob = p_grid)
+  posterior <- likelihood * prior / sum(likelihood * bin_size * prior)
+  # creating a tibble containing the data
+  d <- tibble(prior = prior, p_grid = p_grid, likelihood = likelihood, posterior = posterior)
+  # drawing a sample from the posterior distribution
+  samples <- sample(p_grid, size = dens, replace = TRUE, prob = posterior)
+  # creating a rounded list of the sample HDPI-values
+  x <- round(HPDI(samples), 3)
+  # getting the probability of scoring above chance.
+  xx <- sum((samples > 0.5) == TRUE) / length(samples)
+  # plotting the posterior distribution of all teachers knowledge of cogsci
+  plot <- ggplot(d)+
+    geom_line(aes(p_grid, posterior), color = "red")+
+    geom_line(aes(p_grid, prior), color = "blue")+
+    labs(x = "probability grid",
+         y = "posterior density",
+         title = all_d$person[i],
+         subtitle = paste("HDPI:", "|89 -", x[1], " ", x[2], "- 89|", "   scoring > chance:", xx*100, "%", sep = " "))
+  print(plot)
+  print(paste("Teacher:", all_d$person[i], "HDPI:", "|89 -", x[1], " ", x[2], "- 89|", "   scoring > chance:", xx, sep = " "))
+}
+```
+Changing the prior changes the outcome of the posterior distribution a lot for the individuals with very low response rate and a little for individuals with a higher response-rate. As an example Riccardo goes from having 50% chance of scoring > chance with a uniform prior to having an 84% chance of scoring > chance with a normally distributed prior with a mean of 0.8 and a sd of 0.2. On the other hand, Mikkel - who had the same chance of scoring > chance as Riccardo with a uniform prior - only improves to the point of having a 63% probability of scoring above chance.
+
+
+
+# 4. You go back to your teachers and collect more data (multiply the previous numbers by 100). 
+Calculate their knowledge with both a uniform prior and a normal prior with a mean of 0.8 and a standard deviation of 0.2. Do you still see a difference between the results? Why?
+
+```{r Recalculating posteriors with more data}
+new_d <- all_d
+new_d$correct <- all_d$correct * 100
+new_d$answered <- all_d$answered * 100
+
+# Calculating the posterior for each teacher with uniform prior
+dens <- 1e4 # set a density value of 1000
+p_grid <- seq(from = 0, to = 1, length = dens) # defining a probability grid for grid approximation
+prior <- rep(1, dens) # defining a uniform prior
+
+for (i in 1:length(all_d$person)){
+  likelihood <- dbinom(new_d$correct[i], size = new_d$answered[i], prob = p_grid)
+  posterior <- likelihood * prior / sum(likelihood * bin_size * prior)
+  # creating a tibble containing the data
+  d <- tibble(prior = prior, p_grid = p_grid, likelihood = likelihood, posterior = posterior)
+  # drawing a sample from the posterior distribution
+  samples <- sample(p_grid, size = dens, replace = TRUE, prob = posterior)
+  # creating a rounded list of the sample HDPI-values
+  x <- round(HPDI(samples), 3)
+  # getting the probability of scoring above chance.
+  xx <- sum((samples > 0.5) == TRUE) / length(samples)
+  # plotting the posterior distribution of all teachers knowledge of cogsci
+  plot <- ggplot(d)+
+    geom_line(aes(p_grid, posterior), color = "red")+
+    geom_line(aes(p_grid, prior), color = "blue")+
+    labs(x = "probability grid",
+         y = "posterior density",
+         title = all_d$person[i],
+         subtitle = paste("|89 -", x[1], "   ", x[2], "- 89|", "   scoring > chance:", xx*100, "%", sep = " "))
+  print(plot)
+  print(paste("Teacher:", all_d$person[i], "HDPI:", "|89 -", x[1], " ", x[2], "- 89|", "   scoring > chance:", xx, sep = " "))
+}
+
+
+# Calculating the posterior for each teacher with a gaussian prior with mean = 0.8 and sd = 0.2
+dens <- 1e4 # set a density value of 1000
+p_grid <- seq(from = 0, to = 1, length = dens) # defining a probability grid for grid approximation
+prior <- dnorm(p_grid, mean = 0.8, sd = 0.2) # defining a normal distribution with mean 0.8 and sd of 0.2 as the prior
+
+for (i in 1:length(all_d$person)){
+  likelihood <- dbinom(new_d$correct[i], size = new_d$answered[i], prob = p_grid)
+  posterior <- likelihood * prior / sum(likelihood * bin_size * prior)
+  # creating a tibble containing the data
+  d <- tibble(prior = prior, p_grid = p_grid, likelihood = likelihood, posterior = posterior)
+  # drawing a sample from the posterior distribution
+  samples <- sample(p_grid, size = dens, replace = TRUE, prob = posterior)
+  # creating a rounded list of the sample HDPI-values
+  x <- round(HPDI(samples), 3)
+  # getting the probability of scoring above chance.
+  xx <- sum((samples > 0.5) == TRUE) / length(samples)
+  # plotting the posterior distribution of all teachers knowledge of cogsci
+  plot <- ggplot(d)+
+    geom_line(aes(p_grid, posterior), color = "red")+
+    geom_line(aes(p_grid, prior), color = "blue")+
+    labs(x = "probability grid",
+         y = "posterior density",
+         title = all_d$person[i],
+         subtitle = paste("HDPI:", "|89 -", x[1], " ", x[2], "- 89|", "   scoring > chance:", xx*100, "%", sep = " "))
+  print(plot)
+  print(paste("Teacher:", all_d$person[i], "HDPI:", "|89 -", x[1], " ", x[2], "- 89|", "   scoring > chance:", xx, sep = " "))
+}
+```
+When the sample size is larger we see a smaller change in the posterior distribution even though we change the prior to be gaussian with a mean of 0.8. This is because the evidence weighs more the larger the sample size, and in this case the evidence given by the actual responses is so overwhelming that the prior expectations don't change too much about the posterior distribution.
+
+
+# 5. Imagine you're a skeptic and think your teachers do not know anything about CogSci, given the content of their classes.
+How would you operationalize that belief?
+```{r Recalculating posteriors with a skeptic prior}
+# Calculating the posterior for each teacher with a gaussian prior with mean = 0.3 and sd = 0.2
+dens <- 1e4 # set a density value of 1000
+p_grid <- seq(from = 0, to = 1, length = dens) # defining a probability grid for grid approximation
+prior <- dnorm(p_grid, mean = 0.5, sd = 0.2) # defining a normal distribution with mean 0.5 and sd of 0.2 as the prior
+
+for (i in 1:length(all_d$person)){
+  likelihood <- dbinom(all_d$correct[i], size = all_d$answered[i], prob = p_grid)
+  posterior <- likelihood * prior / sum(likelihood * prior * bin_size)
+  # creating and extracting a tibble containing the data for each participant
+  nam <- paste("d", all_d$person[i], sep="_") # new name for each participant
+  assign(nam, tibble(prior = prior, p_grid = p_grid, likelihood = likelihood, posterior = posterior))
+  # drawing a sample from the posterior distribution
+  samples <- sample(p_grid, size = dens, replace = TRUE, prob = posterior)
+  # creating a rounded list of the sample HDPI-values
+  x <- round(HPDI(samples), 3)
+  # getting the probability of scoring above chance.
+  xx <- sum((samples > 0.5) == TRUE) / length(samples)
+  # plotting the posterior distribution of all teachers knowledge of cogsci
+  plot <- ggplot(d)+
+    geom_line(aes(p_grid, posterior), color = "red")+
+    geom_line(aes(p_grid, prior), color = "blue")+
+    geom_line(aes(p_grid, likelihood), color = "black")+
+    labs(x = "probability grid",
+         y = "posterior density",
+         title = all_d$person[i],
+         subtitle = paste("HDPI:", "|89 -", x[1], " ", x[2], "- 89|", "   scoring > chance:", xx*100, "%", sep = " "))
+  print(plot)
+  print(paste("Teacher:", all_d$person[i], "HDPI:", "|89 -", x[1], " ", x[2], "- 89|", "   scoring > chance:", xx, sep = " "))
+}
+```
+A way of modeling the disbelief in our teachers knowledge of cogsci is by adjusting our prior to account for that. We could e.g. set the prior to be a gaussian distribution with a mean of 0.3 and a sd of 0.2. This is quite a skeptic model as we're essentially saying that they'll get about every third answer correct (lower than chance).
+
+# 6. Optional question: 
+Can you estimate the difference between Riccardo's estimated knowledge and that of each of the other teachers? Would you deem it credible ($that is, would you believe that it is actually different)?
+
+# 7. Bonus knowledge: 
+all the stuff we have done can be implemented in a lme4-like fashion using the brms package. Here is an example.
+```{r}
+library(brms)
+
+d <- data.frame(
+  Correct=c(3,2,160,66),
+  Questions=c(6,2,198,132),
+  Teacher=c("RF","KT","JS","MW"))
+
+# Model sampling only from the prior (for checking the predictions your prior leads to)
+FlatModel_priorCheck <- brm(Correct|trials(Questions) ~ 1, 
+                 data = subset(d, Teacher=="RF"),
+                 prior = prior("uniform(0,1)", class = "Intercept"),
+                 family = binomial,
+                 sample_prior = "only") # here we tell the model to ignore the data
+
+# Plotting the predictions of the model (prior only) against the actual data
+pp_check(FlatModel_priorCheck, nsamples = 100)
+
+# Model sampling by combining prior and likelihood
+FlatModel <- brm(Correct|trials(Questions) ~ 1, 
+                 data = subset(d, Teacher=="RF"),
+                 prior = prior("uniform(0,1)", class = "Intercept"),
+                 family = binomial,
+                 sample_prior = T)
+# Plotting the predictions of the model (prior + likelihood) against the actual data
+pp_check(FlatModel, nsamples = 100)
+
+# plotting the posteriors and the sampling process
+plot(FlatModel)
+
+
+PositiveModel_priorCheck <- brm(Correct|trials(Questions) ~ 1,
+                     data = subset(d, Teacher=="RF"),
+                     prior = prior("normal(0.8,0.2)", 
+                                   class = "Intercept"),
+                     family=binomial,
+                     sample_prior = "only")
+pp_check(PositiveModel_priorCheck, nsamples = 100)
+
+PositiveModel <- brm(Correct|trials(Questions) ~ 1,
+                     data = subset(d, Teacher=="RF"),
+                     prior = prior("normal(0.8,0.2)", 
+                                   class = "Intercept"),
+                     family=binomial,
+                     sample_prior = T)
+pp_check(PositiveModel, nsamples = 100)
+plot(PositiveModel)
+
+SkepticalModel_priorCheck <- brm(Correct|trials(Questions) ~ 1, 
+                      data = subset(d, Teacher=="RF"),
+                      prior=prior("normal(0.5,0.01)", class = "Intercept"),
+                      family=binomial,
+                      sample_prior = "only")
+pp_check(SkepticalModel_priorCheck, nsamples = 100)
+
+SkepticalModel <- brm(Correct|trials(Questions) ~ 1, 
+                      data = subset(d, Teacher=="RF"),
+                      prior = prior("normal(0.5,0.01)", class = "Intercept"),
+                      family = binomial,
+                      sample_prior = T)
+pp_check(SkepticalModel, nsamples = 100)
+plot(SkepticalModel)
+```
+
+If you dare, try to tweak the data and model to test two hypotheses:
+- Is Kristian different from Josh?
+- Is Josh different from chance?
+
+### Second part: Focusing on predictions
+
+Last year you assessed the teachers (darned time runs quick!). Now you want to re-test them and assess whether your models are producing reliable predictions. In Methods 3 we learned how to do machine-learning style assessment of predictions (e.g. rmse on testing datasets). Bayesian stats makes things a bit more complicated. So we'll try out how that works. N.B. You can choose which prior to use for the analysis of last year's data.
+
+Questions to be answered (but see guidance below):
+1- Write a paragraph discussing how assessment of prediction performance is different in Bayesian vs. frequentist models
+2- Provide at least one plot and one written line discussing prediction errors for each of the teachers.
+
+This is the old data:
+- Riccardo: 3 correct answers out of 6 questions
+- Kristian: 2 correct answers out of 2 questions (then he gets bored)
+- Josh: 160 correct answers out of 198 questions (Josh never gets bored)
+- Mikkel: 66 correct answers out of 132 questions
+
+This is the new data:
+- Riccardo: 9 correct answers out of 10 questions (then he freaks out about teaching preparation and leaves)
+- Kristian: 8 correct answers out of 12 questions
+- Josh: 148 correct answers out of 172 questions (again, Josh never gets bored)
+- Mikkel: 34 correct answers out of 65 questions
+
+Guidance Tips
+
+1. There are at least two ways of assessing predictions.
+2. Last year's results are this year's expectations.
+3. Are the parameter estimates changing? (way 1)
+4. How does the new data look in last year's predictive posterior? (way 2)
+
+```{r Calculating new posteriors using 2019 posteriors as priors }
+
+```
+
