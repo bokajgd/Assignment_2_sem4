@@ -4,7 +4,7 @@ author: "Riccardo Fusaroli"
 date: "29/01/2019"
 output: html_document
 editor_options: 
-  chunk_output_type: console
+  chunk_output_type: inline
 ---
 
 1. Solve the task using grid approximation
@@ -41,11 +41,14 @@ This is the data:
 
 ```{r Loading libraries}
 library(pacman)
-p_load(rethinking, tidyverse, rstan, brms)
+p_load(rethinking, tidyverse, rstan, brms, dplyr, source)
+
+source("~/Desktop/Cognitive Science/Cognitive Science 4th semester/Computational Modeling for Cognitive Science/Computational_modeling/my_useful_functions_class1.R")
+
 
 # create a tibble from the data
-all_d <- tibble(
-  person = c('riccardo', 'kristian', 'josh', 'mikkel'),
+all_df <- tibble(
+  person = c('RF', 'KT', 'JS', 'MW'),
   correct = c(3, 2, 160, 66),
   answered = c(6, 2, 198, 132))
 ```
@@ -64,19 +67,13 @@ What is the probability he knows more than chance (0.5) [try figuring this out. 
 dens <- 1e4
 p_grid <- seq(from = 0, to = 1, length.out = dens)
 # calculate bin size
-bin_size <- abs(p_grid[1]-p_grid[2])
-# defining a uniform prior
-prior <- rep(1, dens)
-# calculate bin size
-bin_size <- abs(p_grid[1]-p_grid[2])
-# investigating the prior
-dens(rbinom(dens, 6, runif(dens, 0, 1)))
-# testing a prior that excludes any value below chance (50%)
-#prior <- ifelse(p_grid < 0.5, 0, 1)
+bin_size <- p_grid[2]
+ # defining a normal distribution with mean 0.5 and sd of 0.2 as the prior
+prior <- dnorm(p_grid, mean = 0.5, sd = 0.2)
 # defining the likelihood of a correct response
 likelihood <- dbinom(3, size=6, prob = p_grid)
 # computing the standardized posterior
-posterior <- likelihood * prior / sum(likelihood *bin_size * prior)
+posterior <- likelihood * prior / sum(likelihood * bin_size * prior)
 # plotting Riccardo's posterior
 plot(p_grid, posterior)
 # creating a tibble containing the data
@@ -84,33 +81,45 @@ d <- tibble(prior = prior, p_grid = p_grid, likelihood = likelihood, posterior =
 # plotting the posterior distribution of Riccardo's ability
 ggplot(d)+
   geom_line(aes(p_grid, posterior), color="red")+
-  geom_line(aes(p_grid, prior), color="blue")
+  geom_line(aes(p_grid, prior), color="blue")+
+  annotate("text", x=0.635, y=2.6, label= "Posterior", colour = "red")+ 
+  annotate("text", x=0.85, y=.7, label= "Prior", colour = "blue")+ 
+  theme_classic()+
+  labs(y=NULL, x="Grid")
+  #geom_line(aes(p_grid, prior), color="c")
 # calculating the parts of the distribution with maximum probability by drawing samples from the posterior distribution
 samples <- sample(p_grid, size = dens, replace = TRUE, prob = posterior)
 HPDI(samples)
 # Calculating the percent chance that Riccardo will score above chance
-sum((samples > 0.5) == TRUE) / length(samples)
+sum((samples >= 0.5) == TRUE) * bin_size
+
+sd(samples)
 ```
 
 ##
 
 ```{r Riccardo's estimated knowledge of CogSci based on quadratic approximation}
+
 # f is the binomial distribution (c) with a uniform prior (p)
 ric_performance <- rethinking::map(
   alist(c ~ dbinom(6, p), # binomial distribution
-        p ~ dunif(0, 1)), # uniform prior
-  data = list(c = 3))
+        p ~ dnorm(0.5,0.2)), # uniform prior
+        data = list(c = 3)
+  )
 # summary of the quadratic approximation
 precis(ric_performance)
 # specify a normal distribution based on the output of the model
-x <- seq(0, 1, length=dens)
-ric_dist <- dnorm(x, mean = 0.5, sd = 0.2)
+ric_dist <- dnorm(p_grid, mean = 0.5, sd = 0.14)
 # adding riccardos distribution to the tibble 'd'
 d$ric_dist <- ric_dist
 # plotting the quadratic approximation
 ggplot(d)+
   geom_line(aes(p_grid, ric_dist), color = "red")+
-  geom_line(aes(p_grid, prior), color = "blue")
+  geom_line(aes(p_grid, prior), color = "black")
+
+samples_quad <- sample(p_grid, size = dens, replace = TRUE, prob = ric_dist)
+sum((samples_quad >= 0.5) == TRUE) / length(samples_quad)
+
 ```
 
 
@@ -122,7 +131,7 @@ Use grid approximation. Comment on the posteriors of Riccardo and Mikkel.
 ```{r Calculating a posterior for each teacher}
 dens <- 1e4 # set a density value of 1000
 p_grid <- seq(from = 0, to = 1, length = dens) # defining a probability grid for grid approximation
-prior <- rep(1, dens) # defining a uniform prior
+prior <- dnorm(p_grid, mean = 0.5, sd = 0.2)  # defining a uniform prior
 
 for (i in 1:length(all_d$person)){
   likelihood <- dbinom(all_d$correct[i], size = all_d$answered[i], prob = p_grid)
@@ -139,12 +148,13 @@ for (i in 1:length(all_d$person)){
   plot <- ggplot(d)+
     geom_line(aes(p_grid, posterior), color = "red")+
     geom_line(aes(p_grid, prior), color = "blue")+
-    labs(x = "probability grid",
-         y = "posterior density",
+    theme_classic()+
+    labs(x = "Probability grid",
+         y = "Posterior density",
          title = all_d$person[i],
-         subtitle = paste("|89 -", x[1], "   ", x[2], "- 89|", "   scoring > chance:", xx*100, "%", sep = " "))
+         subtitle = paste("|89 -", x[1], "   ", x[2], "- 89|", "   Scoring > chance:", xx*100, "%", sep = " "))
   print(plot)
-  print(paste("Teacher:", all_d$person[i], "HDPI:", "|89 -", x[1], " ", x[2], "- 89|", "   scoring > chance:", xx, sep = " "))
+  print(paste("Teacher:", all_d$person[i], "HDPI:", "|89 -", x[1], " ", x[2], "- 89|", "   Scoring > chance:", xx, sep = " "))
 }
 ```
 The above code prints out 4 plots containing both prior and posterior for every person we gathered data on, in this case our 4 teachers; Riccardo, Kristian, Josh & Mikkel. The plots furthermore contain information about the HPDI-value for each probability distribution.
@@ -188,7 +198,7 @@ for (i in 1:length(all_d$person)){
   print(paste("Teacher:", all_d$person[i], "HDPI:", "|89 -", x[1], " ", x[2], "- 89|", "   scoring > chance:", xx, sep = " "))
 }
 ```
-Changing the prior changes the outcome of the posterior distribution a lot for the individuals with very low response rate and a little for individuals with a higher response-rate. As an example Riccardo goes from having 50% chance of scoring > chance with a uniform prior to having an 84% chance of scoring > chance with a normally distributed prior with a mean of 0.8 and a sd of 0.2. On the other hand, Mikkel - who had the same chance of scoring > chance as Riccardo with a uniform prior - only improves to the point of having a 63% probability of scoring above chance.
+Changing the prior changes the outrcome of the posterior distribution a lot for the individuals with very low response rate and a little for individuals with a higher response-rate. As an example Riccardo goes from having 50% chance of scoring > chance with a uniform prior to having an 84% chance of scoring > chance with a normally distributed prior with a mean of 0.8 and a sd of 0.2. On the other hand, Mikkel - who had the same chance of scoring > chance as Riccardo with a uniform prior - only improves to the point of having a 63% probability of scoring above chance.
 
 
 
@@ -367,6 +377,60 @@ plot(SkepticalModel)
 If you dare, try to tweak the data and model to test two hypotheses:
 - Is Kristian different from Josh?
 - Is Josh different from chance?
+```{r}
+p_load(patchwork)
+prior <- dnorm(p_grid, mean = 0.5, sd = 0.2) # defining a normal distribution with mean 0.5 and sd of 0.2 as the prior
+
+res_RF <- calc_teacher(n_correct = all_df$correct[all_df$person == "RF"], 
+                              n_question = all_df$answered[all_df$person == "RF"], 
+                              prior = prior)
+# Kristian 
+res_MW <- calc_teacher(n_correct = all_df$correct[all_df$person == "MW"], 
+                              n_question = all_df$answered[all_df$person == "MW"], 
+                              prior = prior)
+
+res_JS <- calc_teacher(n_correct = all_df$correct[all_df$person == "JS"], 
+                              n_question = all_df$answered[all_df$person == "JS"], 
+                              prior = prior)
+# used as an example for Josh
+res_KT <- calc_teacher(n_correct = all_df$correct[all_df$person == "KT"], 
+                              n_question = all_df$answered[all_df$person == "KT"], 
+                              prior = prior)
+
+p <- pretty_plot(p_grid = res_RF$grid, prior = res_RF$prior, likelihood = res_RF$likelihood, posterior = res_RF$teacher_posterior)
+p1 <-  pretty_plot(p_grid = res_KT$grid, prior = res_KT$prior, likelihood = res_KT$likelihood, posterior = res_KT$teacher_posterior)
+pMW <-  pretty_plot(p_grid = res_MW$grid, prior = res_MW$prior, likelihood = res_MW$likelihood, posterior = res_MW$teacher_posterior)
+pJS <-  pretty_plot(p_grid = res_JS$grid, prior = res_JS$prior, likelihood = res_JS$likelihood, posterior = res_JS$teacher_posterior)
+
+
+# patchwork 
+(p + ggtitle("Riccardo")) + (p1 + ggtitle("Kristian"))
+(pMW + ggtitle("Mikkel")) + (p1 + ggtitle("Kristian"))
+(pJS + ggtitle("Josh")) + (p1 + ggtitle("Kristian"))
+
+
+RF_pos <- res_RF$teacher_posterior
+KT_pos <- res_KT$teacher_posterior
+MW_pos <- res_MW$teacher_posterior
+JS_pos <- res_JS$teacher_posterior# vector of length == p_grid (10 000)
+
+sam_JS <- sample(size = 100000, x = p_grid, prob = JS_pos, replace = T)
+mean(sam_JS)
+sd(sam_JS)
+sam_KT <- sample(size = 100000, x = p_grid, prob = KT_pos, replace = T)
+mean(sam_KT)
+sd(sam_KT) # it equivalent to that the SD for KT is bigger than for JS and to say that the variance is bigger for KT that for JS given that variance = sd^2
+
+#Sample for mikkel
+sam_MW <- sample(size = 100000, x = p_grid, prob = MW_pos, replace = T)
+sam_RF <- sample(size = 100000, x = p_grid, prob = RF_pos, replace = T)
+
+# this give you answer to - (on average) how likely is it that Kristian is smart than mikkel
+sum(sam_KT > sam_MW)/100000*100
+
+sum(sam_KT > sam_JS)/100000*100
+```
+
 
 ### Second part: Focusing on predictions
 
@@ -395,7 +459,148 @@ Guidance Tips
 3. Are the parameter estimates changing? (way 1)
 4. How does the new data look in last year's predictive posterior? (way 2)
 
-```{r Calculating new posteriors using 2019 posteriors as priors }
+```{r Calculating new posteriors using 2019 posteriors as priors and doing prediction error testing on post pred dist}
+# Test whether new posterior distributions have been credibly altered by new data using old data as priors
+new_df <- tibble(
+  person = c('RF', 'KT', 'JS', 'MW'),
+  correct = c(9, 8, 148, 34),
+  answered = c(10, 12, 172, 65))
 
+#___________________________________________ RICCARDO _________________________________________________
+
+new_RF <- calc_teacher(n_correct = new_df$correct[new_df$person == "RF"], 
+                              n_question = new_df$answered[new_df$person == "RF"], 
+                              prior = res_RF$teacher_posterior)
+
+np <- pretty_plot(p_grid = new_RF$grid, prior = new_RF$prior, likelihood = new_RF$likelihood, posterior = new_RF$teacher_posterior)
+
+
+# patchwork 
+(p + ggtitle("Riccardo - Old")) + (np + ggtitle("Riccardo - New"))
+# Test mean prediction error on new data using old data as posterior
+nsam_RF <- sample(size = 100000, x = p_grid, prob = new_RF$teacher_posterior, replace = T)
+
+r_b <-sum(nsam_RF > sam_RF)/100000*100
+
+
+RFpos_pred = rbinom(100000,  # how many times we simluate this
+                  size = 10, # how many question he was asked
+                  prob = sam_RF # samples of josh knowledge 
+                  )
+hist(RFpos_pred)
+hist(RFpos_pred-9) # prediction error distribution
+
+rmse_r <- paste("RMSE = ", sqrt(mean((RFpos_pred-9))^2),  collapse = "")
+
+RFpos_pred_df  <- data.frame(RFpos_pred)
+
+Ric <- ggplot(RFpos_pred_df, aes(RFpos_pred-9))+
+  geom_histogram(binwidth = 1, colour="black", fill="#E69F00")+
+  theme_classic()+
+  labs(x= "Prediction error", y="Frequency", title = "Riccardo - Prediction error", subtitle = rmse_r)
+
+#  ___________________________________________ JOSH _________________________________________________
+
+new_JS <- calc_teacher(n_correct = new_df$correct[new_df$person == "JS"], 
+                              n_question = new_df$answered[new_df$person == "JS"], 
+                              prior = res_JS$teacher_posterior)
+
+npJS <- pretty_plot(p_grid = new_JS$grid, prior = new_JS$prior, likelihood = new_JS$likelihood, posterior = new_JS$teacher_posterior)
+
+
+# patchwork 
+(pJS + ggtitle("Josh - Old")) + (npJS + ggtitle("Josh - New"))
+# Test mean prediction error on new data using old data as posterior
+nsam_JS <- sample(size = 100000, x = p_grid, prob = new_JS$teacher_posterior, replace = T)
+
+j_b <- sum(nsam_JS > sam_JS)/100000*100
+
+
+JSpos_pred = rbinom(100000,  # how many times we simluate this
+                  size = 172, # how many question he was asked
+                  prob = sam_JS # samples of josh knowledge 
+                  )
+hist(JSpos_pred)
+
+
+rmse_j <- paste("RMSE = ", sqrt(mean((JSpos_pred-148))^2),  collapse = "")
+
+JSpos_pred_df  <- data.frame(JSpos_pred)
+
+Josh <- ggplot(JSpos_pred_df, aes(JSpos_pred-148))+
+  geom_histogram(binwidth = 1, colour="black", fill="#E69F00")+
+  theme_classic()+
+  labs(x= "Prediction error", y="Frequency", title = "Josh - Prediction error", subtitle = rmse_j)
+
+#___________________________________________ KRISTIAN _________________________________________________
+
+new_KT <- calc_teacher(n_correct = new_df$correct[new_df$person == "KT"], 
+                              n_question = new_df$answered[new_df$person == "KT"], 
+                              prior = res_KT$teacher_posterior)
+
+np1 <- pretty_plot(p_grid = new_KT$grid, prior = new_KT$prior, likelihood = new_KT$likelihood, posterior = new_KT$teacher_posterior)
+
+
+# patchwork 
+(p1 + ggtitle("Kristian - Old")) + (np1 + ggtitle("Kristian - New"))
+# Test mean prediction error on new data using old data as posterior
+nsam_KT <- sample(size = 100000, x = p_grid, prob = new_KT$teacher_posterior, replace = T)
+
+k_b <-sum(nsam_KT > sam_KT)/100000*100
+
+
+KTpos_pred = rbinom(100000,  # how many times we simluate this
+                  size = 12, # how many question he was asked
+                  prob = sam_KT # samples of josh knowledge 
+                  )
+hist(KTpos_pred)
+hist(KTpos_pred-8) # prediction error distribution
+
+rmse_k <- paste("RMSE = ", sqrt(mean((KTpos_pred-8))^2),  collapse = "")
+
+KTpos_pred_df  <- data.frame(KTpos_pred)
+
+Kris <- ggplot(KTpos_pred_df, aes(KTpos_pred-8))+
+  geom_histogram(binwidth = 1, colour="black", fill="#E69F00")+
+  theme_classic()+
+  labs(x= "Prediction error", y="Frequency", title = "Kristian - Prediction error", subtitle = rmse_k)
+
+#  ___________________________________________ JOSH _________________________________________________
+
+new_MW <- calc_teacher(n_correct = new_df$correct[new_df$person == "MW"], 
+                              n_question = new_df$answered[new_df$person == "MW"], 
+                              prior = res_MW$teacher_posterior)
+
+npMW <- pretty_plot(p_grid = new_MW$grid, prior = new_MW$prior, likelihood = new_MW$likelihood, posterior = new_MW$teacher_posterior)
+
+
+# patchwork 
+(pMW + ggtitle("Mikkel - Old")) + (npMW + ggtitle("Mikkel - New"))
+# Test mean prediction error on new data using old data as posterior
+nsam_MW <- sample(size = 100000, x = p_grid, prob = new_MW$teacher_posterior, replace = T)
+
+m_b <- sum(nsam_MW > sam_MW)/100000*100
+
+
+MWpos_pred = rbinom(100000,  # how many times we simluate this
+                  size = 65, # how many question he was asked
+                  prob = sam_MW # samples of josh knowledge 
+                  )
+hist(MWpos_pred)
+ss
+rmse_m <- paste("RMSE = ", sqrt(mean((MWpos_pred-34))^2),  collapse = "")
+
+MWpos_pred_df  <- data.frame(MWpos_pred)
+
+Mikkel <- ggplot(MWpos_pred_df, aes(MWpos_pred-34))+
+  geom_histogram(binwidth = 1, colour="black", fill="#E69F00")+
+  theme_classic()+s
+  labs(x= "Prediction error", y="Frequency", title = "Mikkel - Prediction error", subtitle = rmse_m)
+
+s
+
+#_________ PLOTS ____________
+
+paste("Likelihood of being better acc. new model:", "Riccardo = ", r_b, "%   ", "Josh = ", j_b, "%   ", "Kristian = ", k_b, "%   ", "Mikkel = ", m_b, "%")
+(Ric + Josh + Kris + Mikkel)
 ```
-
